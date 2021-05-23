@@ -250,25 +250,51 @@ end
 
 # Continuously send the heartbeat.
 function heartbeat_loop(c::Client)
-    v = c.conn.v
+    @info "Started heartbeat loop" logkws(c)...
+    # v = c.conn.v
     try
-        sleep(rand(1:round(Int, c.hb_interval / 1000)))
-        heartbeat(c) || (isopen(c) && @error "Writing HEARTBEAT failed" logkws(c)...)
+        # sleep(rand(1:round(Int, c.hb_interval / 1000)))
+        # ok = heartbeat(c)
+        # if !ok
+        #     if isopen(c)
+        #         @error "Writing HEARTBEAT failed when client is open" logkws(c)...
+        #     else
+        #         @error "Writing HEARTBEAT failed when client is closed" logkws(c)...
+        #     end
+        # else
+        #     @debug "HEARTBEAT normal" logkws(c)...
+        # end
 
-        while c.conn.v == v && isopen(c)
+        # Keep sending heartbeat.
+        # If there's any problem, exit out of the heartbeat loop and then try
+        # to reconnect. The reconnect method will open a new connection and
+        # start a new heartbeat loop.
+        while true
             sleep(c.hb_interval / 1000)
-            if c.last_hb > c.last_ack && isopen(c) && c.conn.v == v
+            if c.last_hb > c.last_ack && isopen(c)
                 @debug "Encountered zombie connection" logkws(c)...
-                reconnect(c; zombie=true)
-            elseif !heartbeat(c) && c.conn.v == v && isopen(c)
-                @error "Writing HEARTBEAT failed" logkws(c)...
+                break
+            else
+                ok = heartbeat(c)
+                if !ok
+                    if isopen(c)
+                        @error "Writing HEARTBEAT failed whent client is open (loop)" logkws(c)...
+                    else
+                        @error "Writing HEARTBEAT failed whent client is closed (loop)" logkws(c)...
+                    end
+                    break
+                else
+                    @debug "Heartbeat normal" logkws(c)...
+                end
             end
         end
-        @debug "Heartbeat loop exited" logkws(c; conn=v)...
+        @info "Heartbeat loop exited normally after reconnection" logkws(c)...
     catch e
-        kws = logkws(c; conn=v, exception=(e, catch_backtrace()))
+        kws = logkws(c; exception=(e, catch_backtrace()))
         @warn "Heartbeat loop exited unexpectedly" kws...
     end
+    reconnect(c; zombie=true)
+    @info "Reconnected client" logkws(c)...
 end
 
 # Continuously read and respond to messages.
@@ -366,6 +392,7 @@ end
 # Reconnect to the gateway.
 function reconnect(c::Client, ::Dict=Dict(); resume::Bool=true, zombie::Bool=false)
     @info "Reconnecting" logkws(c; resume=resume, zombie=zombie)...
+    sleep(3) # throttle
     try
         close(c; zombie=zombie, statuscode=resume ? 4000 : 1000)
     catch ex
